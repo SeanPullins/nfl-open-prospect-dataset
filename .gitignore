@@ -13,3 +13,11 @@ venv/
 private/
 local_only/
 nflverse_draft_player_master_WITH_PFF*
+
+# Local modeling artifacts
+models/
+predictions/
+reports/*.csv
+reports/*.json
+
+# Old experimental scripts / scratch outputs can stay local unless intentionally promoted
