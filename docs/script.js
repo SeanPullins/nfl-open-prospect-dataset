@@ -108,6 +108,16 @@ function render() {
   });
 
   filtered.sort((a, b) => {
+    if (sort === "pick_asc") {
+      const ay = num(a.draft_year) ?? 999999;
+      const by = num(b.draft_year) ?? 999999;
+      const ap = num(a.pick) ?? 999999;
+      const bp = num(b.pick) ?? 999999;
+
+      if (ay !== by) return by - ay;
+      return ap - bp;
+    }
+
     const av = num(a[sort]);
     const bv = num(b[sort]);
 
@@ -149,6 +159,24 @@ function render() {
         <span class="badge outcome-badge">${escapeHtml(r.actual_outcome_flag || "—")}</span>
         <span class="badge outcome-badge">${escapeHtml(typeLabel)}</span>
         <span class="badge">${escapeHtml(r.confidence_label || "—")}</span>
+      </div>
+
+      <div class="draft-regrade">
+        <div class="draft-regrade-title">Draft Slot Regrade</div>
+        <div class="draft-regrade-grid">
+          <div>
+            <span>Drafted</span>
+            <strong>${escapeHtml(r.pick ? "Pick " + r.pick : "Undrafted / Unknown")}</strong>
+          </div>
+          <div>
+            <span>Should Have Gone</span>
+            <strong>${escapeHtml(r.should_have_been_drafted || "—")}</strong>
+          </div>
+          <div>
+            <span>Regrade</span>
+            <strong>${escapeHtml(r.draft_slot_regrade || "—")}</strong>
+          </div>
+        </div>
       </div>
 
       <div class="summary">${escapeHtml(r.player_card_summary || "")}</div>

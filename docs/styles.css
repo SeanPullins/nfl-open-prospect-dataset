@@ -257,3 +257,63 @@ select#outcomeFilter {
 .card.card-bad-miss .badge.outcome-badge {
   font-weight: 800;
 }
+
+/* Draft slot regrade section */
+.draft-regrade {
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fafafa;
+}
+
+.draft-regrade-title {
+  font-size: 13px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.draft-regrade-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.draft-regrade-grid div {
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px;
+}
+
+.draft-regrade-grid span {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 3px;
+}
+
+.draft-regrade-grid strong {
+  display: block;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.card.card-good-miss .draft-regrade {
+  background: #ecfdf3;
+  border-color: #188038;
+}
+
+.card.card-bad-miss .draft-regrade {
+  background: #fff1f1;
+  border-color: #d93025;
+}
+
+@media (max-width: 600px) {
+  .draft-regrade-grid {
+    grid-template-columns: 1fr;
+  }
+}
