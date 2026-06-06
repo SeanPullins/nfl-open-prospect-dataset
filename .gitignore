@@ -1,0 +1,15 @@
+# Mac
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Private/proprietary data
+*pff*
+*PFF*
+private/
+local_only/
+nflverse_draft_player_master_WITH_PFF*
