@@ -4,21 +4,15 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>NFL Prospect & Player Grades</title>
-  <link rel="stylesheet" href="styles.css?v=2026-1" />
+  <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <header>
     <h1>NFL Prospect & Player Grades</h1>
-    <p>PFF-powered historical prospect/outcome grading plus 2026 prospect projections.</p>
+    <p>PFF-powered historical prospect/outcome grading with class ranks, position ranks, draft value, and comps.</p>
   </header>
 
   <section class="controls">
-    <select id="datasetFilter">
-      <option value="historical">Historical Grades</option>
-      <option value="projections2026">2026 Projections</option>
-      <option value="future">Future Classes</option>
-    </select>
-
     <input id="searchInput" type="text" placeholder="Search player, college, position..." />
 
     <select id="yearFilter">
@@ -30,15 +24,15 @@
     </select>
 
     <select id="sortFilter">
-      <option value="grade">Sort: Grade</option>
+      <option value="outcome_grade_pff_powered">Sort: Grade</option>
       <option value="draft_year">Sort: Draft Year</option>
-      <option value="overall_rank">Sort: Class Rank</option>
-      <option value="position_rank">Sort: Position Rank</option>
+      <option value="overall_rank_in_class">Sort: Class Rank</option>
+      <option value="position_rank_in_class">Sort: Position Rank</option>
       <option value="elite_probability">Sort: Elite Probability</option>
       <option value="bust_probability">Sort: Bust Probability</option>
     </select>
 
-    <a class="download" id="downloadLink" href="data/player_cards_v8.csv" download>Download CSV</a>
+    <a class="download" href="data/player_cards_v8.csv" download>Download CSV</a>
   </section>
 
   <main>
@@ -46,6 +40,6 @@
     <div id="cards" class="cards"></div>
   </main>
 
-  <script src="script.js?v=2026-1"></script>
+  <script src="script.js"></script>
 </body>
 </html>
