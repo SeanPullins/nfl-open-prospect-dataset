@@ -100,35 +100,311 @@ def position_bonus(pos):
     return 0
 
 
+
+PRIVATE_MASTER = Path("private/nflverse_draft_player_master_WITH_PFF_AND_COMBINE.csv")
+
+CAREER_ENRICH_COLS = [
+    "allpro",
+    "probowls",
+    "seasons_started",
+    "w_av",
+    "car_av",
+    "dr_av",
+    "games",
+    "pass_completions",
+    "pass_attempts",
+    "pass_yards",
+    "pass_tds",
+    "pass_ints",
+    "rush_atts",
+    "rush_yards",
+    "rush_tds",
+    "receptions",
+    "rec_yards",
+    "rec_tds",
+    "def_solo_tackles",
+    "def_ints",
+    "def_sacks",
+]
+
+def clean_name_key(s):
+    return (
+        s.astype(str)
+         .str.lower()
+         .str.replace(r"[^a-z0-9]+", " ", regex=True)
+         .str.strip()
+    )
+
+def merge_career_enrichment(df):
+    """
+    Merge public-safe career stat columns from the private master into V9.
+    Does not expose PFF columns. Only career outcomes/stats/awards.
+    """
+    if not PRIVATE_MASTER.exists():
+        print(f"WARNING: private master missing: {PRIVATE_MASTER}")
+        return df
+
+    src = pd.read_csv(PRIVATE_MASTER, low_memory=False)
+
+    name_col = "player_name_clean" if "player_name_clean" in src.columns else "player"
+    year_col = "draft_year" if "draft_year" in src.columns else "season"
+
+    if name_col not in src.columns or year_col not in src.columns:
+        print("WARNING: could not find merge keys in private master")
+        return df
+
+    keep = [name_col, year_col]
+    if "position" in src.columns:
+        keep.append("position")
+
+    keep += [c for c in CAREER_ENRICH_COLS if c in src.columns]
+    src = src[keep].copy()
+
+    src["_merge_name"] = clean_name_key(src[name_col])
+    src["_merge_year"] = pd.to_numeric(src[year_col], errors="coerce")
+
+    df = df.copy()
+    df["_merge_name"] = clean_name_key(df["player"])
+    df["_merge_year"] = pd.to_numeric(df["draft_year"], errors="coerce")
+
+    src = src.drop_duplicates(["_merge_name", "_merge_year"], keep="first")
+
+    merge_cols = ["_merge_name", "_merge_year"] + [c for c in CAREER_ENRICH_COLS if c in src.columns]
+    enriched = df.merge(src[merge_cols], on=["_merge_name", "_merge_year"], how="left", suffixes=("", "_career"))
+
+    # Fill/add career columns.
+    for c in CAREER_ENRICH_COLS:
+        career_c = f"{c}_career"
+        if career_c in enriched.columns:
+            if c in enriched.columns:
+                enriched[c] = enriched[c].where(enriched[c].notna(), enriched[career_c])
+            else:
+                enriched[c] = enriched[career_c]
+            enriched = enriched.drop(columns=[career_c], errors="ignore")
+
+    enriched = enriched.drop(columns=["_merge_name", "_merge_year"], errors="ignore")
+
+    return enriched
+
+def as_num(row, col, default=0):
+    try:
+        val = row.get(col, default)
+        if pd.isna(val):
+            return default
+        return float(val)
+    except Exception:
+        return default
+
+def career_stat_raw(row):
+    """
+    Position-specific production raw score.
+    This will later be converted to percentile within position group.
+    """
+    pos = str(row.get("position_group") or row.get("position")).upper().strip()
+
+    pass_yards = as_num(row, "pass_yards")
+    pass_tds = as_num(row, "pass_tds")
+    pass_ints = as_num(row, "pass_ints")
+
+    rush_yards = as_num(row, "rush_yards")
+    rush_tds = as_num(row, "rush_tds")
+
+    receptions = as_num(row, "receptions")
+    rec_yards = as_num(row, "rec_yards")
+    rec_tds = as_num(row, "rec_tds")
+
+    sacks = as_num(row, "def_sacks")
+    tackles = as_num(row, "def_solo_tackles")
+    def_ints = as_num(row, "def_ints")
+
+    if pos == "QB":
+        return (
+            np.log1p(pass_yards) * 8
+            + np.sqrt(pass_tds) * 5
+            - np.sqrt(max(pass_ints, 0)) * 1.5
+            + np.log1p(rush_yards) * 2
+            + np.sqrt(rush_tds) * 2
+        )
+
+    if pos == "RB":
+        return (
+            np.log1p(rush_yards) * 8
+            + np.sqrt(rush_tds) * 5
+            + np.log1p(rec_yards) * 3
+            + np.sqrt(rec_tds) * 2
+        )
+
+    if pos in {"WR", "TE"}:
+        return (
+            np.log1p(rec_yards) * 9
+            + np.sqrt(rec_tds) * 5
+            + np.log1p(receptions) * 3
+        )
+
+    if pos in {"EDGE", "DE", "IDL", "DT", "LB"}:
+        return (
+            np.sqrt(sacks) * 9
+            + np.log1p(tackles) * 4
+            + np.sqrt(def_ints) * 3
+        )
+
+    if pos in {"CB", "S", "SAF", "DB"}:
+        return (
+            np.sqrt(def_ints) * 9
+            + np.log1p(tackles) * 4
+            + np.sqrt(sacks) * 2
+        )
+
+    return 0
+
+def career_honors_raw(row):
+    games = as_num(row, "games")
+    starts = as_num(row, "seasons_started")
+    probowls = as_num(row, "probowls")
+    allpro = as_num(row, "allpro")
+
+    return (
+        np.sqrt(games) * 2.0
+        + np.sqrt(starts) * 4.0
+        + probowls * 8.0
+        + allpro * 18.0
+    )
+
+
+
+def build_continuous_position_success(df):
+    """
+    Build a non-compressed historical success score.
+
+    Percentile ranks make many successful players look like 99s.
+    This uses a continuous raw impact score and scales it within position group.
+    """
+    work = df.copy()
+
+    for c in [
+        "actual_value", "games", "seasons_started", "probowls", "allpro",
+        "career_stat_raw", "career_honors_raw", "draft_year"
+    ]:
+        if c in work.columns:
+            work[c] = pd.to_numeric(work[c], errors="coerce")
+        else:
+            work[c] = 0
+
+    av = work["actual_value"].fillna(0).clip(lower=0)
+    games = work["games"].fillna(0).clip(lower=0)
+    starts = work["seasons_started"].fillna(0).clip(lower=0)
+    probowls = work["probowls"].fillna(0).clip(lower=0)
+    allpro = work["allpro"].fillna(0).clip(lower=0)
+    stat_raw = work["career_stat_raw"].fillna(0).clip(lower=0)
+    honors_raw = work["career_honors_raw"].fillna(0).clip(lower=0)
+
+    # Raw career impact. This is intentionally continuous.
+    # Log/sqrt transforms reduce extreme dominance but preserve separation.
+    work["career_impact_raw"] = (
+        np.log1p(av) * 28
+        + np.sqrt(games) * 2.0
+        + np.sqrt(starts) * 3.5
+        + probowls * 7.5
+        + allpro * 17.5
+        + stat_raw * 0.35
+        + honors_raw * 0.25
+    )
+
+    mature_mask = pd.to_numeric(work["draft_year"], errors="coerce").le(2022)
+
+    def scale_group(s):
+        s = pd.to_numeric(s, errors="coerce")
+        valid = s.dropna()
+
+        if len(valid) < 10:
+            return pd.Series(np.nan, index=s.index)
+
+        lo = valid.quantile(0.05)
+        hi = valid.quantile(0.995)
+
+        if hi <= lo:
+            return pd.Series(np.nan, index=s.index)
+
+        x = ((s - lo) / (hi - lo)).clip(lower=0, upper=1)
+
+        # Football-readable curve:
+        # lifts strong careers into realistic starter/star ranges
+        # without flattening all elite players to 99.
+        scaled = 35 + 64 * (x ** 0.72)
+
+        return scaled.clip(lower=0, upper=99)
+
+    work["position_success_score"] = (
+        work.where(mature_mask)
+            .groupby("position_group")["career_impact_raw"]
+            .transform(scale_group)
+            .round(1)
+    )
+
+    # Global version for cross-position class ranking/tiebreaks.
+    valid = work.loc[mature_mask, "career_impact_raw"].dropna()
+    if len(valid) > 10:
+        lo = valid.quantile(0.05)
+        hi = valid.quantile(0.995)
+        if hi > lo:
+            x = ((work["career_impact_raw"] - lo) / (hi - lo)).clip(0, 1)
+            work["global_success_score"] = (35 + 64 * (x ** 0.72)).clip(0, 99).round(1)
+        else:
+            work["global_success_score"] = np.nan
+    else:
+        work["global_success_score"] = np.nan
+
+    work.loc[~mature_mask, ["position_success_score", "global_success_score", "career_impact_raw"]] = np.nan
+
+    return work[["career_impact_raw", "position_success_score", "global_success_score"]]
+
+
 def actual_value_to_team(row):
     """
     Mature classes: actual value to team.
 
-    Do not multiply by positional value here. Multiplication was flattening elite QBs
-    into 99s and unfairly dragging strong RB outcomes down. Use actual outcome quality
-    plus a small positional-context bonus instead.
+    Primary input is continuous position-relative career impact.
+    This prevents every successful QB/star from being flattened to 99.
     """
+    pos_success = row.get("position_success_score")
+    grade = row.get("outcome_grade_pff_powered")
+
+    if not pd.isna(pos_success):
+        return round(max(0, min(99, float(pos_success))), 1)
+
+    # Fallback if continuous success score is unavailable.
     pct = row.get("actual_position_percentile")
     av = row.get("actual_value")
-    grade = row.get("outcome_grade_pff_powered")
     pos = row.get("position_group") or row.get("position")
 
     av_score = av_to_score(av)
 
-    if not pd.isna(pct) and not pd.isna(av_score):
-        base = 0.70 * float(pct) + 0.30 * float(av_score)
-    elif not pd.isna(pct):
-        base = float(pct)
-    elif not pd.isna(av_score):
-        base = float(av_score)
-    elif not pd.isna(grade):
-        base = float(grade)
-    else:
+    parts = []
+    weights = []
+
+    if not pd.isna(pct):
+        parts.append(float(pct))
+        weights.append(0.50)
+
+    if not pd.isna(av_score):
+        parts.append(float(av_score))
+        weights.append(0.35)
+
+    if not pd.isna(grade):
+        parts.append(float(grade))
+        weights.append(0.15)
+
+    if not parts:
         return np.nan
+
+    weights = np.array(weights, dtype=float)
+    weights = weights / weights.sum()
+    base = float(np.dot(parts, weights))
 
     base += position_bonus(pos)
 
     return round(max(0, min(99, base)), 1)
+
 
 def current_value_to_team(row):
     grade = row.get("outcome_grade_pff_powered")
@@ -279,11 +555,11 @@ def class_rank_regrade(row):
         return "Drafted too late"
 
     # Overdrafts: player went much earlier than his class re-rank.
-    if pick <= 5 and rank > 32:
+    if pick <= 5 and rank > 64:
         return "Major overdraft"
-    if pick <= 15 and rank > 64:
+    if pick <= 15 and rank > 100:
         return "Major overdraft"
-    if pick <= 32 and rank > 100:
+    if pick <= 32 and rank > 140:
         return "Overdraft"
     if pick + 35 < rank:
         return "Drafted too early"
@@ -325,9 +601,44 @@ def outcome_flag(row):
 def main():
     df = pd.read_csv(IN, low_memory=False)
 
-    for c in ["draft_year", "pick", "actual_value", "actual_position_percentile", "outcome_grade_pff_powered"]:
+    # Bring in public-safe career stats/awards from private master.
+    df = merge_career_enrichment(df)
+
+    for c in [
+        "draft_year", "pick", "actual_value", "actual_position_percentile",
+        "outcome_grade_pff_powered", "games", "seasons_started", "probowls",
+        "allpro", "w_av", "car_av", "dr_av", "pass_yards", "pass_tds",
+        "pass_ints", "rush_yards", "rush_tds", "receptions", "rec_yards",
+        "rec_tds", "def_solo_tackles", "def_ints", "def_sacks"
+    ]:
         if c in df.columns:
             df[c] = n(df[c])
+
+    # Position-relative stat and honors/longevity percentiles for mature comparisons.
+    df["career_stat_raw"] = df.apply(career_stat_raw, axis=1)
+    df["career_honors_raw"] = df.apply(career_honors_raw, axis=1)
+
+    df["career_stat_score"] = (
+        df.groupby("position_group")["career_stat_raw"]
+          .rank(pct=True, method="average")
+          .mul(100)
+          .clip(upper=99)
+          .round(1)
+    )
+
+    df["career_honors_score"] = (
+        df.groupby("position_group")["career_honors_raw"]
+          .rank(pct=True, method="average")
+          .mul(100)
+          .clip(upper=99)
+          .round(1)
+    )
+
+    # Non-compressed mature historical success scores.
+    continuous_success = build_continuous_position_success(df)
+    df["career_impact_raw"] = continuous_success["career_impact_raw"]
+    df["position_success_score"] = continuous_success["position_success_score"]
+    df["global_success_score"] = continuous_success["global_success_score"]
 
     df["score_mode"] = df["draft_year"].map(score_mode)
 
@@ -348,6 +659,43 @@ def main():
         ],
         default=df["outcome_grade_pff_powered"],
     )
+
+    # Mature historical display score:
+    # blend position-relative success with global impact.
+    # Do NOT use old prospect/model grade here; mature players should be judged
+    # by what actually happened, not what they looked like before the draft.
+    mature_mask = df["score_mode"].eq("actual_value")
+
+    pos_score = pd.to_numeric(df.get("position_success_score"), errors="coerce")
+    global_score = pd.to_numeric(df.get("global_success_score"), errors="coerce")
+
+    blended_actual = (
+        pos_score.fillna(df["site_display_score"]) * 0.65
+        + global_score.fillna(pos_score).fillna(df["site_display_score"]) * 0.35
+    )
+
+    df.loc[mature_mask, "site_display_score"] = blended_actual.loc[mature_mask].clip(0, 99).round(1)
+
+    # Bust compression: low-career-value players should not float into the 50s/60s
+    # just because position percentiles or old projection signals were generous.
+    av = pd.to_numeric(df.get("actual_value"), errors="coerce")
+    games = pd.to_numeric(df.get("games"), errors="coerce")
+    probowls = pd.to_numeric(df.get("probowls"), errors="coerce").fillna(0)
+    allpro = pd.to_numeric(df.get("allpro"), errors="coerce").fillna(0)
+
+    no_honors = probowls.eq(0) & allpro.eq(0)
+
+    df.loc[mature_mask & no_honors & av.le(3), "site_display_score"] = df.loc[
+        mature_mask & no_honors & av.le(3), "site_display_score"
+    ].clip(upper=32)
+
+    df.loc[mature_mask & no_honors & av.le(8) & games.le(40), "site_display_score"] = df.loc[
+        mature_mask & no_honors & av.le(8) & games.le(40), "site_display_score"
+    ].clip(upper=42)
+
+    df.loc[mature_mask & no_honors & av.le(15) & games.le(70), "site_display_score"] = df.loc[
+        mature_mask & no_honors & av.le(15) & games.le(70), "site_display_score"
+    ].clip(upper=52)
 
     df["site_display_score_label"] = df["score_mode"].map(score_label)
     df["should_have_been_drafted"] = df["site_display_score"].map(bucket)
