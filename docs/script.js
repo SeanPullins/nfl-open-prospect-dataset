@@ -1,5 +1,6 @@
 let historicalRows = [];
 let projectionRows2026 = [];
+let futureRows = [];
 let rows = [];
 
 function parseCSV(text) {
@@ -80,6 +81,29 @@ function normalizeHistorical(r) {
   };
 }
 
+function normalizeFuture(r) {
+  return {
+    dataset: "Future Class",
+    player: r.player,
+    draft_year: r.draft_year,
+    position: r.position,
+    position_group: r.position_group,
+    college: r.college,
+    pick: r.projected_pick,
+    grade: r.projection_score,
+    tier: r.projection_tier,
+    overall_rank: r.watchlist_rank,
+    position_rank: r.position_rank || "",
+    draft_value: r.projected_pick ? `Projected pick ${r.projected_pick}` : "Future watchlist",
+    confidence: r.class_status || "Future",
+    starter_probability: r.starter_probability,
+    elite_probability: r.elite_probability,
+    bust_probability: r.bust_probability,
+    summary: `${r.player} (${r.draft_year}, ${r.position}, ${r.college}) is listed as a future-class player. ${r.projection_explanation || ""}`,
+    comps: `College stats: ${r.college_stats_status || "pending"} · PFF: ${r.pff_status || "pending"} · All-22: ${r.all22_status || "pending"}`
+  };
+}
+
 function normalize2026(r) {
   return {
     dataset: "2026 Projection",
@@ -109,6 +133,9 @@ function setDataset() {
   if (dataset === "projections2026") {
     rows = projectionRows2026.map(normalize2026);
     document.getElementById("downloadLink").href = "data/prospect_projections_2026_v1.csv";
+  } else if (dataset === "future") {
+    rows = futureRows.map(normalizeFuture);
+    document.getElementById("downloadLink").href = "data/future_prospects.csv";
   } else {
     rows = historicalRows.map(normalizeHistorical);
     document.getElementById("downloadLink").href = "data/player_cards_v8.csv";
@@ -229,6 +256,7 @@ async function loadCSV(path) {
 async function init() {
   historicalRows = await loadCSV("data/player_cards_v8.csv");
   projectionRows2026 = await loadCSV("data/prospect_projections_2026_v1.csv");
+  futureRows = await loadCSV("data/future_prospects.csv");
 
   setDataset();
 

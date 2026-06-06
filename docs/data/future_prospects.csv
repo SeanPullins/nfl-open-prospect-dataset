@@ -1,0 +1,2 @@
+player,draft_year,position,position_group,college,class_status,watchlist_rank,projected_pick,projected_round,projection_score,ceiling_score,floor_score,starter_probability,elite_probability,bust_probability,projection_tier,projection_explanation,college_stats_status,pff_status,all22_status,notes
+Sample 2027 Player,2027,QB,QB,TBD,future_watchlist,1,,,,,,,,,Unscored future watchlist,"Future class placeholder. Add college stats, PFF, and All-22 data as available.",pending,pending,pending,
