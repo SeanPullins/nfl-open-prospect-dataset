@@ -513,6 +513,70 @@ def regrade(row):
     return "Drafted about right"
 
 
+def should_have_bucket_from_rank(row):
+    """
+    Convert redraft class rank into a should-have-gone bucket.
+
+    Uses class rank as the main source of truth, then applies small guardrails
+    for premium positions so top positional outcomes do not get under-labeled.
+    """
+    rank = row.get("redraft_class_rank")
+    pos_rank = row.get("redraft_position_rank")
+    pos = str(row.get("position_group") or row.get("position")).upper().strip()
+    score = row.get("site_display_score")
+
+    if pd.isna(rank):
+        return "Unknown"
+
+    rank = float(rank)
+    pr = np.nan if pd.isna(pos_rank) else float(pos_rank)
+    sc = np.nan if pd.isna(score) else float(score)
+
+    # Base class-rank bucket.
+    if rank <= 5:
+        bucket = "Top-5 caliber"
+    elif rank <= 15:
+        bucket = "Top-15 caliber"
+    elif rank <= 32:
+        bucket = "Round 1 caliber"
+    elif rank <= 64:
+        bucket = "Round 2 caliber"
+    elif rank <= 100:
+        bucket = "Day 2 caliber"
+    elif rank <= 150:
+        bucket = "Early Day 3 caliber"
+    elif rank <= 220:
+        bucket = "Late Day 3 / priority depth"
+    else:
+        bucket = "Undrafted / replacement outcome"
+
+    # Premium-position guardrails.
+    # QB value in particular means a high-end QB outcome belongs in Round 1
+    # even if raw score is not elite on an all-position scale.
+    if pos == "QB":
+        if not pd.isna(pr):
+            if pr <= 1 and rank <= 20:
+                bucket = "Top-5 caliber"
+            elif pr <= 2 and rank <= 24:
+                bucket = "Top-15 caliber"
+            elif pr <= 3 and rank <= 40:
+                bucket = "Round 1 caliber"
+
+        # If QB score is solid and class rank is Round 1-ish, never call him Round 2.
+        if not pd.isna(sc) and sc >= 75 and rank <= 40:
+            if bucket in {"Round 2 caliber", "Day 2 caliber", "Early Day 3 caliber"}:
+                bucket = "Round 1 caliber"
+
+    elif pos in {"EDGE", "DE", "OT", "T", "OL", "WR", "CB"}:
+        if not pd.isna(pr):
+            if pr <= 1 and rank <= 20:
+                bucket = "Top-15 caliber"
+            elif pr <= 3 and rank <= 40:
+                bucket = "Round 1 caliber"
+
+    return bucket
+
+
 def class_rank_regrade(row):
     """
     Draft-slot regrade based on actual pick vs. class-aware re-draft rank.
@@ -743,6 +807,11 @@ def main():
         if not pd.isna(row.get("redraft_position_rank")):
             parts.append(f"{row.get('position_group')} #{int(row.get('redraft_position_rank'))}")
         return " / ".join(parts) if parts else row.get("should_have_been_drafted", "—")
+
+    # Recompute should-have-gone bucket from class-aware rank plus positional context.
+    # This fixes cases like Josh Allen / Baker being under-labeled as Round 2.
+    df["should_have_been_drafted"] = df.apply(should_have_bucket_from_rank, axis=1)
+    df["should_have_pick_bucket"] = df["should_have_been_drafted"].map(bucket_pick)
 
     df["should_have_been_drafted_display"] = df.apply(rank_label, axis=1)
 
