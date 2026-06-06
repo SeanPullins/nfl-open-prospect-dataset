@@ -167,6 +167,279 @@ def card_class(row):
         return "card-good-miss"
     return "card-neutral"
 
+
+def positional_value_multiplier(pos):
+    p = str(pos).upper().strip()
+
+    # Premium-position hierarchy.
+    # QB gets the biggest boost, then EDGE/OT/WR/CB.
+    if p == "QB":
+        return 1.35
+    if p in {"EDGE", "DE"}:
+        return 1.15
+    if p in {"OT", "T"}:
+        return 1.12
+    if p == "WR":
+        return 1.10
+    if p == "CB":
+        return 1.08
+    if p in {"IDL", "DT"}:
+        return 1.02
+    if p in {"S", "SAF"}:
+        return 0.98
+    if p in {"TE", "LB"}:
+        return 0.95
+    if p in {"IOL", "G", "C"}:
+        return 0.92
+    if p == "RB":
+        return 0.88
+    if p in {"ST", "K", "P", "LS"}:
+        return 0.65
+
+    return 1.00
+
+
+def should_have_been_drafted(row):
+    """
+    Re-draft label based on ACTUAL NFL outcome, with a premium-position adjustment.
+    This should not be driven primarily by the prospect/model grade because that can
+    make bad QB misses look like Top-5 caliber.
+    """
+    pos = row.get("position_group") or row.get("position")
+
+    actual_pct = row.get("actual_position_percentile")
+    actual_value = row.get("actual_value")
+    grade = row.get("outcome_grade_pff_powered")
+
+    base = np.nan
+
+    # Best signal: actual outcome percentile within position.
+    if not pd.isna(actual_pct):
+        base = float(actual_pct)
+
+    # Second-best signal: actual value, scaled roughly into a percentile-ish score.
+    elif not pd.isna(actual_value):
+        av = float(actual_value)
+        if av >= 120:
+            base = 99
+        elif av >= 90:
+            base = 96
+        elif av >= 70:
+            base = 92
+        elif av >= 50:
+            base = 85
+        elif av >= 35:
+            base = 75
+        elif av >= 20:
+            base = 62
+        elif av >= 10:
+            base = 48
+        elif av >= 3:
+            base = 35
+        else:
+            base = 20
+
+    # Fallback only.
+    elif not pd.isna(grade):
+        base = float(grade)
+
+    if pd.isna(base):
+        return "Unknown"
+
+    adjusted = base * positional_value_multiplier(pos)
+    adjusted = max(0, min(100, adjusted))
+
+    if adjusted >= 97:
+        return "Top-5 caliber"
+    if adjusted >= 93:
+        return "Top-15 caliber"
+    if adjusted >= 88:
+        return "Round 1 caliber"
+    if adjusted >= 80:
+        return "Round 2 caliber"
+    if adjusted >= 70:
+        return "Day 2 caliber"
+    if adjusted >= 58:
+        return "Early Day 3 caliber"
+    if adjusted >= 40:
+        return "Late Day 3 / priority depth"
+    return "Undrafted / replacement outcome"
+
+
+def should_pick_bucket(label):
+    mapping = {
+        "Top-5 caliber": 5,
+        "Top-15 caliber": 15,
+        "Round 1 caliber": 32,
+        "Round 2 caliber": 64,
+        "Day 2 caliber": 100,
+        "Early Day 3 caliber": 150,
+        "Late Day 3 / priority depth": 220,
+        "Undrafted / replacement outcome": 999,
+    }
+    return mapping.get(label, 999)
+
+
+def draft_slot_regrade(row):
+    pick = row.get("pick")
+    label = row.get("should_have_been_drafted")
+    should_pick = should_pick_bucket(label)
+
+    if pd.isna(pick):
+        if should_pick <= 100:
+            return "Massive undrafted steal"
+        if should_pick <= 220:
+            return "Useful undrafted value"
+        return "Undrafted-level outcome"
+
+    pick = float(pick)
+
+    # Positive value: player should have gone much earlier.
+    if should_pick <= 15 and pick > 64:
+        return "Massive steal"
+    if should_pick <= 32 and pick > 100:
+        return "Massive steal"
+    if should_pick <= 64 and pick > 150:
+        return "Major value"
+    if should_pick <= 100 and pick > 150:
+        return "Good value"
+    if should_pick + 40 < pick:
+        return "Drafted too late"
+
+    # Negative value: player should have gone much later.
+    if pick <= 15 and should_pick > 100:
+        return "Major overdraft"
+    if pick <= 32 and should_pick > 150:
+        return "Major overdraft"
+    if pick <= 64 and should_pick > 220:
+        return "Overdraft"
+    if pick + 50 < should_pick:
+        return "Drafted too early"
+
+    return "Drafted about right"
+
+
+
+def outcome_maturity(row):
+    year = row.get("draft_year")
+    if pd.isna(year):
+        return "unknown"
+
+    year = int(float(year))
+
+    if year >= 2024:
+        return "too_early"
+    if year >= 2022:
+        return "developing"
+    return "mature"
+
+
+
+def draft_capital_profile_score(row):
+    pick = row.get("pick")
+    pos = row.get("position_group") or row.get("position")
+
+    if pd.isna(pick):
+        base = 45
+    else:
+        pick = float(pick)
+
+        if pick <= 5:
+            base = 92
+        elif pick <= 15:
+            base = 88
+        elif pick <= 32:
+            base = 82
+        elif pick <= 64:
+            base = 72
+        elif pick <= 100:
+            base = 63
+        elif pick <= 150:
+            base = 53
+        elif pick <= 220:
+            base = 45
+        else:
+            base = 38
+
+    # Small premium-position bump.
+    p = str(pos).upper().strip()
+    if p == "QB":
+        base += 4
+    elif p in {"EDGE", "DE", "OT", "T", "WR", "CB"}:
+        base += 2
+    elif p in {"RB", "ST", "K", "P", "LS"}:
+        base -= 2
+
+    return max(0, min(99, base))
+
+
+def display_grade_for_site(row):
+    maturity = row.get("outcome_maturity")
+    existing = row.get("outcome_grade_pff_powered")
+    pick = row.get("pick")
+    pos = row.get("position_group") or row.get("position")
+
+    # Mature/developing classes can use the historical outcome model.
+    if maturity != "too_early":
+        return existing
+
+    # 2024/2025: show a prospect / early-career profile score.
+    # Do not let tiny NFL production samples drag down recent premium prospects.
+    draft_score = draft_capital_profile_score(row)
+
+    p = str(pos).upper().strip()
+    premium = p in {"QB", "OT", "T", "OL", "EDGE", "DE", "WR", "CB"}
+
+    # Use probability model only as a light modifier for recent classes.
+    starter = row.get("starter_probability")
+    elite = row.get("elite_probability")
+    bust = row.get("bust_probability")
+
+    prob_score = None
+    if not pd.isna(starter) or not pd.isna(elite) or not pd.isna(bust):
+        s = 50 if pd.isna(starter) else float(starter) * 100
+        e = 20 if pd.isna(elite) else float(elite) * 100
+        b = 35 if pd.isna(bust) else float(bust) * 100
+        prob_score = (0.55 * s) + (0.25 * e) + (0.20 * (100 - b))
+
+    if prob_score is not None:
+        profile = 0.85 * draft_score + 0.15 * prob_score
+    else:
+        profile = draft_score
+
+    # Stronger floors for recent premium prospects.
+    # These are display floors, not final career judgments.
+    if not pd.isna(pick):
+        pk = float(pick)
+
+        if premium:
+            if pk <= 5:
+                profile = max(profile, 88)
+            elif pk <= 10:
+                profile = max(profile, 86)
+            elif pk <= 15:
+                profile = max(profile, 84)
+            elif pk <= 32:
+                profile = max(profile, 78)
+        else:
+            if pk <= 5:
+                profile = max(profile, 84)
+            elif pk <= 15:
+                profile = max(profile, 80)
+            elif pk <= 32:
+                profile = max(profile, 74)
+
+    return round(max(0, min(99, profile)), 1)
+
+
+def display_grade_label(row):
+    if row.get("outcome_maturity") == "too_early":
+        return "Early Profile Score"
+    if row.get("outcome_maturity") == "developing":
+        return "Developing Outcome Score"
+    return "Outcome Score"
+
+
 def main():
     for path in FILES:
         if not path.exists():
@@ -192,6 +465,40 @@ def main():
         # A player should never be both a bad miss and a good miss.
         # For premium/Day 2 failures, bad miss wins.
         df.loc[df["miss_flag"].eq("bad_miss"), "value_flag"] = "neutral"
+
+        df["outcome_maturity"] = df.apply(outcome_maturity, axis=1)
+
+        df["should_have_been_drafted"] = df.apply(should_have_been_drafted, axis=1)
+        df["should_have_pick_bucket"] = df["should_have_been_drafted"].map(should_pick_bucket)
+        df["draft_slot_regrade"] = df.apply(draft_slot_regrade, axis=1)
+
+        # Make the public-facing outcome label match the actual re-draft read.
+        df.loc[df["miss_flag"].eq("bad_miss"), "actual_outcome_flag"] = df.loc[
+            df["miss_flag"].eq("bad_miss"), "draft_slot_regrade"
+        ]
+
+        df.loc[df["value_flag"].eq("good_miss"), "actual_outcome_flag"] = df.loc[
+            df["value_flag"].eq("good_miss"), "draft_slot_regrade"
+        ]
+
+        # 2024/2025 are too early to honestly call hits, misses, steals, or overdrafts.
+        recent_mask = df["outcome_maturity"].eq("too_early")
+        df.loc[recent_mask, "actual_outcome_flag"] = "Too Early to Regrade"
+        df.loc[recent_mask, "should_have_been_drafted"] = "Projection / early-career profile"
+        df.loc[recent_mask, "draft_slot_regrade"] = "Too Early"
+        df.loc[recent_mask, "miss_flag"] = "neutral"
+        df.loc[recent_mask, "value_flag"] = "neutral"
+
+        # 2022/2023 can be shown, but should be marked developing.
+        developing_mask = df["outcome_maturity"].eq("developing")
+        df.loc[developing_mask, "actual_outcome_flag"] = (
+            "Developing: " + df.loc[developing_mask, "actual_outcome_flag"].astype(str)
+        )
+
+        # Separate display score from actual outcome score.
+        # This prevents 2024/2025 players from showing weird immature outcome grades.
+        df["display_grade"] = df.apply(display_grade_for_site, axis=1)
+        df["display_grade_label"] = df.apply(display_grade_label, axis=1)
 
         df["outcome_card_class"] = df.apply(card_class, axis=1)
 

@@ -178,8 +178,8 @@ function render() {
         </div>
 
         <div class="row-score">
-          <span>Grade</span>
-          <strong>${score(r.outcome_grade_pff_powered)}</strong>
+          <span>${escapeHtml(r.display_grade_label || "Grade")}</span>
+          <strong>${score(r.display_grade || r.outcome_grade_pff_powered)}</strong>
         </div>
 
         <div class="row-chevron">▾</div>
