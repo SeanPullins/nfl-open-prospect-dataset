@@ -182,3 +182,78 @@ main {
     font-size: 26px;
   }
 }
+
+/* Historical outcome flags */
+.card.card-bad-miss {
+  border-color: #d93025;
+  background: #fff5f5;
+  box-shadow: 0 2px 10px rgba(217, 48, 37, 0.12);
+}
+
+.card.card-bad-miss .grade {
+  color: #b3261e;
+}
+
+.card.card-bad-miss .outcome-badge {
+  background: #fde8e8;
+  color: #9b1c1c;
+}
+
+.card.card-good-miss {
+  border-color: #188038;
+  background: #f3fff6;
+  box-shadow: 0 2px 10px rgba(24, 128, 56, 0.12);
+}
+
+.card.card-good-miss .grade {
+  color: #137333;
+}
+
+.card.card-good-miss .outcome-badge {
+  background: #dcfce7;
+  color: #166534;
+}
+
+/* Historical outcome miss/value highlighting */
+.card.card-bad-miss {
+  border: 4px solid #d93025 !important;
+  background: #fff1f1 !important;
+  box-shadow: 0 2px 12px rgba(217, 48, 37, 0.20) !important;
+}
+
+.card.card-bad-miss .grade {
+  color: #b3261e !important;
+}
+
+.card.card-bad-miss .outcome-badge {
+  background: #fde8e8 !important;
+  color: #9b1c1c !important;
+}
+
+.card.card-good-miss {
+  border: 4px solid #188038 !important;
+  background: #effff3 !important;
+  box-shadow: 0 2px 12px rgba(24, 128, 56, 0.20) !important;
+}
+
+.card.card-good-miss .grade {
+  color: #137333 !important;
+}
+
+.card.card-good-miss .outcome-badge {
+  background: #dcfce7 !important;
+  color: #166534 !important;
+}
+
+/* Outcome filter support */
+select#outcomeFilter {
+  border-color: #d7d7d7;
+}
+
+.card.card-good-miss .badge.outcome-badge {
+  font-weight: 800;
+}
+
+.card.card-bad-miss .badge.outcome-badge {
+  font-weight: 800;
+}

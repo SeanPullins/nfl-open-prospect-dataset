@@ -4,7 +4,7 @@ function parseCSV(text) {
   const lines = text.trim().split(/\r?\n/);
   const headers = parseLine(lines[0]);
 
-  return lines.slice(1).map(line => {
+  return lines.slice(1).filter(Boolean).map(line => {
     const values = parseLine(line);
     const obj = {};
     headers.forEach((h, i) => obj[h] = values[i] ?? "");
@@ -55,12 +55,21 @@ function score(x) {
   return n.toFixed(1);
 }
 
+function missTypeLabel(r) {
+  if (r.value_flag === "good_miss") return "Good Miss / Value";
+  if (r.miss_flag === "bad_miss") return "Bad Miss";
+  return "Neutral / Expected";
+}
+
 function populateFilters() {
   const years = [...new Set(rows.map(r => r.draft_year).filter(Boolean))].sort((a, b) => Number(b) - Number(a));
   const positions = [...new Set(rows.map(r => r.position_group).filter(Boolean))].sort();
 
   const yearFilter = document.getElementById("yearFilter");
   const positionFilter = document.getElementById("positionFilter");
+
+  yearFilter.innerHTML = '<option value="">All Years</option>';
+  positionFilter.innerHTML = '<option value="">All Positions</option>';
 
   years.forEach(y => {
     const opt = document.createElement("option");
@@ -81,13 +90,20 @@ function render() {
   const q = document.getElementById("searchInput").value.toLowerCase().trim();
   const year = document.getElementById("yearFilter").value;
   const pos = document.getElementById("positionFilter").value;
+  const outcome = document.getElementById("outcomeFilter") ? document.getElementById("outcomeFilter").value : "";
   const sort = document.getElementById("sortFilter").value;
 
   let filtered = rows.filter(r => {
-    const hay = `${r.player} ${r.college} ${r.position} ${r.position_group} ${r.outcome_tier}`.toLowerCase();
+    const hay = `${r.player} ${r.college} ${r.position} ${r.position_group} ${r.outcome_tier} ${r.actual_outcome_flag}`.toLowerCase();
+
     if (q && !hay.includes(q)) return false;
-    if (year && r.draft_year !== year) return false;
+    if (year && String(r.draft_year) !== String(year)) return false;
     if (pos && r.position_group !== pos) return false;
+
+    if (outcome === "good_miss" && r.value_flag !== "good_miss") return false;
+    if (outcome === "bad_miss" && r.miss_flag !== "bad_miss") return false;
+    if (outcome === "neutral" && (r.value_flag === "good_miss" || r.miss_flag === "bad_miss")) return false;
+
     return true;
   });
 
@@ -110,7 +126,9 @@ function render() {
 
   filtered.slice(0, 250).forEach(r => {
     const card = document.createElement("article");
-    card.className = "card";
+    card.className = `card ${r.outcome_card_class || ""}`;
+
+    const typeLabel = missTypeLabel(r);
 
     card.innerHTML = `
       <div class="card-top">
@@ -128,6 +146,8 @@ function render() {
         <span class="badge">Class #${escapeHtml(r.overall_rank_in_class || "—")}</span>
         <span class="badge">${escapeHtml(r.position_group)} #${escapeHtml(r.position_rank_in_class || "—")}</span>
         <span class="badge">${escapeHtml(r.draft_value_vs_grade || "—")}</span>
+        <span class="badge outcome-badge">${escapeHtml(r.actual_outcome_flag || "—")}</span>
+        <span class="badge outcome-badge">${escapeHtml(typeLabel)}</span>
         <span class="badge">${escapeHtml(r.confidence_label || "—")}</span>
       </div>
 
@@ -158,7 +178,7 @@ function escapeHtml(s) {
 }
 
 async function init() {
-  const response = await fetch("data/player_cards_v8.csv");
+  const response = await fetch("data/player_cards_v8.csv", { cache: "no-store" });
   const text = await response.text();
   rows = parseCSV(text);
 
@@ -168,6 +188,9 @@ async function init() {
   document.getElementById("searchInput").addEventListener("input", render);
   document.getElementById("yearFilter").addEventListener("change", render);
   document.getElementById("positionFilter").addEventListener("change", render);
+  if (document.getElementById("outcomeFilter")) {
+    document.getElementById("outcomeFilter").addEventListener("change", render);
+  }
   document.getElementById("sortFilter").addEventListener("change", render);
 }
 
