@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NFL Prospect & Player Grades</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header>
+    <h1>NFL Prospect & Player Grades</h1>
+    <p>PFF-powered historical prospect/outcome grading with class ranks, position ranks, draft value, and comps.</p>
+  </header>
+
+  <section class="controls">
+    <input id="searchInput" type="text" placeholder="Search player, college, position..." />
+
+    <select id="yearFilter">
+      <option value="">All Years</option>
+    </select>
+
+    <select id="positionFilter">
+      <option value="">All Positions</option>
+    </select>
+
+    <select id="sortFilter">
+      <option value="outcome_grade_pff_powered">Sort: Grade</option>
+      <option value="draft_year">Sort: Draft Year</option>
+      <option value="overall_rank_in_class">Sort: Class Rank</option>
+      <option value="position_rank_in_class">Sort: Position Rank</option>
+      <option value="elite_probability">Sort: Elite Probability</option>
+      <option value="bust_probability">Sort: Bust Probability</option>
+    </select>
+
+    <a class="download" href="data/player_cards_v8.csv" download>Download CSV</a>
+  </section>
+
+  <main>
+    <div id="count"></div>
+    <div id="cards" class="cards"></div>
+  </main>
+
+  <script src="script.js"></script>
+</body>
+</html>
