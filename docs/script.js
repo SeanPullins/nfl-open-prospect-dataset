@@ -253,7 +253,7 @@ function escapeHtml(s) {
 }
 
 async function init() {
-  const response = await fetch("data/player_cards_v8.csv", { cache: "no-store" });
+  const response = await fetch("data/player_cards_v9.csv", { cache: "no-store" });
   const text = await response.text();
   rows = parseCSV(text);
 
