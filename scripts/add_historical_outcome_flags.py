@@ -201,11 +201,14 @@ def positional_value_multiplier(pos):
 
 def should_have_been_drafted(row):
     """
-    Re-draft label based on ACTUAL NFL outcome, with a premium-position adjustment.
-    This should not be driven primarily by the prospect/model grade because that can
-    make bad QB misses look like Top-5 caliber.
+    Re-draft label.
+
+    Mature classes use actual NFL outcome.
+    Developing classes use a developing profile score so 2022/2023 players are not
+    unfairly dragged down by incomplete career samples.
     """
     pos = row.get("position_group") or row.get("position")
+    maturity = row.get("outcome_maturity")
 
     actual_pct = row.get("actual_position_percentile")
     actual_value = row.get("actual_value")
@@ -213,41 +216,116 @@ def should_have_been_drafted(row):
 
     base = np.nan
 
-    # Best signal: actual outcome percentile within position.
-    if not pd.isna(actual_pct):
-        base = float(actual_pct)
+    # 2022/2023: use developing profile, not final career outcome.
+    # This blends model/profile grade, draft capital, and early NFL value.
+    # Draft capital matters, but should not let shaky young QBs auto-grade as Top-5.
+    if maturity == "developing":
+        draft_score = draft_capital_profile_score(row)
 
-    # Second-best signal: actual value, scaled roughly into a percentile-ish score.
-    elif not pd.isna(actual_value):
-        av = float(actual_value)
-        if av >= 120:
-            base = 99
-        elif av >= 90:
-            base = 96
-        elif av >= 70:
-            base = 92
-        elif av >= 50:
-            base = 85
-        elif av >= 35:
-            base = 75
-        elif av >= 20:
-            base = 62
-        elif av >= 10:
-            base = 48
-        elif av >= 3:
-            base = 35
+        if pd.isna(grade):
+            profile_grade = draft_score
         else:
-            base = 20
+            profile_grade = float(grade)
 
-    # Fallback only.
-    elif not pd.isna(grade):
-        base = float(grade)
+        av_score = np.nan
+        if not pd.isna(actual_value):
+            av = float(actual_value)
+            if av >= 50:
+                av_score = 90
+            elif av >= 40:
+                av_score = 84
+            elif av >= 30:
+                av_score = 78
+            elif av >= 20:
+                av_score = 68
+            elif av >= 10:
+                av_score = 56
+            elif av >= 5:
+                av_score = 45
+            else:
+                av_score = 30
 
-    if pd.isna(base):
-        return "Unknown"
+        if pd.isna(av_score):
+            base = 0.75 * profile_grade + 0.25 * draft_score
+        else:
+            base = 0.65 * profile_grade + 0.20 * draft_score + 0.15 * av_score
 
-    adjusted = base * positional_value_multiplier(pos)
-    adjusted = max(0, min(100, adjusted))
+        p = str(pos).upper().strip()
+        if p == "QB":
+            base += 3
+        elif p in {"OT", "T", "OL", "EDGE", "DE", "WR", "CB"}:
+            base += 2
+        elif p in {"RB", "ST", "K", "P", "LS"}:
+            base -= 2
+
+        # Floors for high-end developing profiles.
+        # If the profile grade is already excellent, avoid under-labeling young hits.
+        if profile_grade >= 94:
+            if p in {"RB", "TE", "LB", "S", "SAF"}:
+                base = max(base, 88)   # Round 1 caliber
+            else:
+                base = max(base, 93)   # Top-15 caliber
+        elif profile_grade >= 92:
+            base = max(base, 88)       # Round 1 caliber
+        elif profile_grade >= 88:
+            base = max(base, 80)       # Round 2 caliber
+
+        # Premium top-5 developing picks with strong enough profile should not be
+        # called Round 2 unless early profile is truly weak.
+        if not pd.isna(row.get("pick")):
+            pk = float(row.get("pick"))
+            if pk <= 5 and p in {"QB", "EDGE", "DE", "LB", "OT", "T", "OL", "WR", "CB"} and profile_grade >= 88:
+                base = max(base, 88)   # Round 1 caliber
+
+        # Caps for shaky developing players.
+        # They can still improve later, but we should not label them Top-5 yet.
+        if profile_grade < 85:
+            base = min(base, 84)   # max Round 2 caliber
+        if p == "QB" and profile_grade < 85 and not pd.isna(actual_value) and float(actual_value) < 15:
+            base = min(base, 78)   # max Day 2 caliber for now
+
+        adjusted = max(0, min(100, base))
+
+    # 2024/2025: still too early; label gets overwritten later, but keep sane fallback.
+    elif maturity == "too_early":
+        adjusted = display_grade_for_site(row)
+
+    else:
+        # Best signal for mature classes: actual outcome percentile within position.
+        if not pd.isna(actual_pct):
+            base = float(actual_pct)
+
+        # Second-best signal: actual value, scaled roughly into a percentile-ish score.
+        elif not pd.isna(actual_value):
+            av = float(actual_value)
+            if av >= 120:
+                base = 99
+            elif av >= 90:
+                base = 96
+            elif av >= 70:
+                base = 92
+            elif av >= 50:
+                base = 85
+            elif av >= 35:
+                base = 75
+            elif av >= 20:
+                base = 62
+            elif av >= 10:
+                base = 48
+            elif av >= 3:
+                base = 35
+            else:
+                base = 20
+
+        # Fallback only.
+        elif not pd.isna(grade):
+            base = float(grade)
+
+        if pd.isna(base):
+            return "Unknown"
+
+        adjusted = base * positional_value_multiplier(pos)
+        adjusted = max(0, min(100, adjusted))
 
     if adjusted >= 97:
         return "Top-5 caliber"
