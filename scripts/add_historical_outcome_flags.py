@@ -100,21 +100,32 @@ def miss_flag(row):
 
     grade = float(grade)
 
-    if "major_negative" in outlier or "negative_outlier" in outlier:
-        return "bad_miss"
-
+    # Only treat negative outliers as bad misses if they had real draft capital.
+    # Late-round failures are usually expected, not true misses.
     if pd.isna(pick):
-        return "neutral" if grade >= 40 else "bad_miss"
+        return "neutral"
 
     pick = float(pick)
 
+    if "major_negative" in outlier or "negative_outlier" in outlier:
+        if pick <= 100:
+            return "bad_miss"
+
+    # Premium draft capital miss.
     if pick <= 15 and grade < 58:
         return "bad_miss"
+
+    # Round 1/2 miss.
     if pick <= 64 and grade < 52:
         return "bad_miss"
+
+    # Day 2 miss.
     if pick <= 100 and grade < 45:
         return "bad_miss"
-    if grade < 35:
+
+    # Day 3 players should not be red unless the model says the outcome was truly awful
+    # and they still had relatively meaningful early Day 3 capital.
+    if pick <= 150 and grade < 25:
         return "bad_miss"
 
     return "neutral"
@@ -149,10 +160,11 @@ def value_flag(row):
     return "neutral"
 
 def card_class(row):
-    if row.get("value_flag") == "good_miss":
-        return "card-good-miss"
+    # Bad miss takes priority over good miss if both flags somehow fire.
     if row.get("miss_flag") == "bad_miss":
         return "card-bad-miss"
+    if row.get("value_flag") == "good_miss":
+        return "card-good-miss"
     return "card-neutral"
 
 def main():
@@ -176,6 +188,11 @@ def main():
         df["actual_outcome_flag"] = df.apply(actual_outcome_flag, axis=1)
         df["miss_flag"] = df.apply(miss_flag, axis=1)
         df["value_flag"] = df.apply(value_flag, axis=1)
+
+        # A player should never be both a bad miss and a good miss.
+        # For premium/Day 2 failures, bad miss wins.
+        df.loc[df["miss_flag"].eq("bad_miss"), "value_flag"] = "neutral"
+
         df["outcome_card_class"] = df.apply(card_class, axis=1)
 
         df["is_bad_miss"] = df["miss_flag"].eq("bad_miss")
