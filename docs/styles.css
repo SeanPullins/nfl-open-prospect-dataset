@@ -317,3 +317,146 @@ select#outcomeFilter {
     grid-template-columns: 1fr;
   }
 }
+
+/* Expandable list view */
+.player-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.player-row {
+  padding: 0;
+  overflow: hidden;
+}
+
+.row-summary {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  display: grid;
+  grid-template-columns: 110px minmax(180px, 1.5fr) minmax(160px, 1fr) minmax(150px, 1fr) 90px 32px;
+  gap: 12px;
+  align-items: center;
+  padding: 14px 16px;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+
+.row-summary:hover {
+  background: rgba(0,0,0,0.03);
+}
+
+.row-pick strong,
+.row-score strong,
+.row-regrade strong,
+.row-outcome strong {
+  display: block;
+  font-weight: 900;
+}
+
+.row-pick span,
+.row-score span,
+.row-regrade span,
+.row-outcome span,
+.row-meta {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.row-name {
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.row-score {
+  text-align: right;
+}
+
+.row-score strong {
+  font-size: 22px;
+  color: var(--accent);
+}
+
+.row-chevron {
+  text-align: right;
+  font-size: 18px;
+  transition: transform 0.15s ease;
+}
+
+.player-row.is-expanded .row-chevron {
+  transform: rotate(180deg);
+}
+
+.row-details {
+  padding: 0 16px 16px;
+  border-top: 1px solid var(--border);
+}
+
+.card.card-bad-miss .row-summary:hover {
+  background: rgba(217, 48, 37, 0.06);
+}
+
+.card.card-good-miss .row-summary:hover {
+  background: rgba(24, 128, 56, 0.06);
+}
+
+.card.card-bad-miss .row-score strong {
+  color: #b3261e !important;
+}
+
+.card.card-good-miss .row-score strong {
+  color: #137333 !important;
+}
+
+@media (max-width: 950px) {
+  .row-summary {
+    grid-template-columns: 90px 1fr 90px 28px;
+  }
+
+  .row-regrade,
+  .row-outcome {
+    grid-column: 2 / -1;
+  }
+
+  .row-score {
+    grid-column: 3;
+    grid-row: 1;
+  }
+
+  .row-chevron {
+    grid-column: 4;
+    grid-row: 1;
+  }
+}
+
+@media (max-width: 600px) {
+  .row-summary {
+    grid-template-columns: 1fr 70px 24px;
+  }
+
+  .row-pick {
+    grid-column: 1 / -1;
+  }
+
+  .row-main {
+    grid-column: 1;
+  }
+
+  .row-score {
+    grid-column: 2;
+    grid-row: 2;
+  }
+
+  .row-chevron {
+    grid-column: 3;
+    grid-row: 2;
+  }
+
+  .row-regrade,
+  .row-outcome {
+    grid-column: 1 / -1;
+  }
+}

@@ -61,6 +61,18 @@ function missTypeLabel(r) {
   return "Neutral / Expected";
 }
 
+function pickLabel(r) {
+  const pick = num(r.pick);
+  if (pick === null) return "UDFA/—";
+  return `Pick ${Math.round(pick)}`;
+}
+
+function roundLabel(r) {
+  const round = num(r.round);
+  if (round === null) return "";
+  return `R${Math.round(round)}`;
+}
+
 function populateFilters() {
   const years = [...new Set(rows.map(r => r.draft_year).filter(Boolean))].sort((a, b) => Number(b) - Number(a));
   const positions = [...new Set(rows.map(r => r.position_group).filter(Boolean))].sort();
@@ -133,66 +145,101 @@ function render() {
 
   const cards = document.getElementById("cards");
   cards.innerHTML = "";
+  cards.className = "player-list";
 
-  filtered.slice(0, 250).forEach(r => {
-    const card = document.createElement("article");
-    card.className = `card ${r.outcome_card_class || ""}`;
-
+  filtered.slice(0, 500).forEach((r, idx) => {
     const typeLabel = missTypeLabel(r);
 
-    card.innerHTML = `
-      <div class="card-top">
-        <div>
-          <div class="name">${escapeHtml(r.player)}</div>
-          <div class="meta">${escapeHtml(r.draft_year)} · ${escapeHtml(r.position)} · ${escapeHtml(r.college)} · Pick ${escapeHtml(r.pick)}</div>
+    const item = document.createElement("article");
+    item.className = `card player-row ${r.outcome_card_class || ""}`;
+
+    const detailsId = `details-${idx}`;
+
+    item.innerHTML = `
+      <button class="row-summary" type="button" aria-expanded="false" aria-controls="${detailsId}">
+        <div class="row-pick">
+          <strong>${escapeHtml(pickLabel(r))}</strong>
+          <span>${escapeHtml(roundLabel(r))}</span>
         </div>
-        <div>
-          <div class="grade">${score(r.outcome_grade_pff_powered)}</div>
-          <div class="tier">${escapeHtml(r.outcome_tier)}</div>
+
+        <div class="row-main">
+          <div class="row-name">${escapeHtml(r.player)}</div>
+          <div class="row-meta">${escapeHtml(r.draft_year)} · ${escapeHtml(r.position)} · ${escapeHtml(r.college)}</div>
         </div>
-      </div>
 
-      <div class="badges">
-        <span class="badge">Class #${escapeHtml(r.overall_rank_in_class || "—")}</span>
-        <span class="badge">${escapeHtml(r.position_group)} #${escapeHtml(r.position_rank_in_class || "—")}</span>
-        <span class="badge">${escapeHtml(r.draft_value_vs_grade || "—")}</span>
-        <span class="badge outcome-badge">${escapeHtml(r.actual_outcome_flag || "—")}</span>
-        <span class="badge outcome-badge">${escapeHtml(typeLabel)}</span>
-        <span class="badge">${escapeHtml(r.confidence_label || "—")}</span>
-      </div>
+        <div class="row-regrade">
+          <span>Should Have Gone</span>
+          <strong>${escapeHtml(r.should_have_been_drafted || "—")}</strong>
+        </div>
 
-      <div class="draft-regrade">
-        <div class="draft-regrade-title">Draft Slot Regrade</div>
-        <div class="draft-regrade-grid">
-          <div>
-            <span>Drafted</span>
-            <strong>${escapeHtml(r.pick ? "Pick " + r.pick : "Undrafted / Unknown")}</strong>
-          </div>
-          <div>
-            <span>Should Have Gone</span>
-            <strong>${escapeHtml(r.should_have_been_drafted || "—")}</strong>
-          </div>
-          <div>
-            <span>Regrade</span>
-            <strong>${escapeHtml(r.draft_slot_regrade || "—")}</strong>
+        <div class="row-outcome">
+          <span>${escapeHtml(r.actual_outcome_flag || "—")}</span>
+          <strong>${escapeHtml(typeLabel)}</strong>
+        </div>
+
+        <div class="row-score">
+          <span>Grade</span>
+          <strong>${score(r.outcome_grade_pff_powered)}</strong>
+        </div>
+
+        <div class="row-chevron">▾</div>
+      </button>
+
+      <div class="row-details" id="${detailsId}" hidden>
+        <div class="badges">
+          <span class="badge">Class #${escapeHtml(r.overall_rank_in_class || "—")}</span>
+          <span class="badge">${escapeHtml(r.position_group)} #${escapeHtml(r.position_rank_in_class || "—")}</span>
+          <span class="badge">${escapeHtml(r.draft_value_vs_grade || "—")}</span>
+          <span class="badge outcome-badge">${escapeHtml(r.actual_outcome_flag || "—")}</span>
+          <span class="badge outcome-badge">${escapeHtml(typeLabel)}</span>
+          <span class="badge">${escapeHtml(r.should_have_been_drafted || "—")}</span>
+          <span class="badge">${escapeHtml(r.draft_slot_regrade || "—")}</span>
+          <span class="badge">${escapeHtml(r.confidence_label || "—")}</span>
+        </div>
+
+        <div class="draft-regrade">
+          <div class="draft-regrade-title">Draft Slot Regrade</div>
+          <div class="draft-regrade-grid">
+            <div>
+              <span>Drafted</span>
+              <strong>${escapeHtml(pickLabel(r))}</strong>
+            </div>
+            <div>
+              <span>Should Have Gone</span>
+              <strong>${escapeHtml(r.should_have_been_drafted || "—")}</strong>
+            </div>
+            <div>
+              <span>Regrade</span>
+              <strong>${escapeHtml(r.draft_slot_regrade || "—")}</strong>
+            </div>
           </div>
         </div>
-      </div>
 
-      <div class="summary">${escapeHtml(r.player_card_summary || "")}</div>
+        <div class="summary">${escapeHtml(r.player_card_summary || "")}</div>
 
-      <div class="probs">
-        <div class="prob">Starter <strong>${pct(r.starter_probability)}</strong></div>
-        <div class="prob">Elite <strong>${pct(r.elite_probability)}</strong></div>
-        <div class="prob">Bust <strong>${pct(r.bust_probability)}</strong></div>
-      </div>
+        <div class="probs">
+          <div class="prob">Starter <strong>${pct(r.starter_probability)}</strong></div>
+          <div class="prob">Elite <strong>${pct(r.elite_probability)}</strong></div>
+          <div class="prob">Bust <strong>${pct(r.bust_probability)}</strong></div>
+        </div>
 
-      <div class="comps">
-        <strong>Comps:</strong> ${escapeHtml(r.historical_position_comps || "—")}
+        <div class="comps">
+          <strong>Comps:</strong> ${escapeHtml(r.historical_position_comps || "—")}
+        </div>
       </div>
     `;
 
-    cards.appendChild(card);
+    const button = item.querySelector(".row-summary");
+    const details = item.querySelector(".row-details");
+
+    button.addEventListener("click", () => {
+      const isOpen = !details.hidden;
+      details.hidden = isOpen;
+      button.setAttribute("aria-expanded", String(!isOpen));
+      item.classList.toggle("is-expanded", !isOpen);
+    });
+
+    cards.appendChild(item);
   });
 }
 
