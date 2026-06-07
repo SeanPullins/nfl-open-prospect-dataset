@@ -14,6 +14,10 @@ from sklearn.preprocessing import StandardScaler
 MASTER = Path("private/nflverse_draft_player_master_WITH_PFF_AND_COMBINE.csv")
 V9 = Path("site_data/player_cards_v9.csv")
 
+EXTRA_PROJECTION_SOURCES = [
+    Path("predictions/prospect_projections_2026_v1_FULL.csv"),
+]
+
 OUT_SITE = Path("site_data/player_cards_v10.csv")
 OUT_DOCS = Path("docs/data/player_cards_v10.csv")
 REPORT = Path("reports/v10_projection_feature_report.json")
@@ -30,19 +34,224 @@ def clean_name(s):
     )
 
 
-def choose_year_col(df):
-    if "draft_year" in df.columns:
-        return "draft_year"
-    if "season" in df.columns:
-        return "season"
-    raise ValueError("No draft_year/season column found")
 
+def normalize_position_group(pos):
+    p = str(pos or "").upper().strip()
+
+    if p in {"QB"}:
+        return "QB"
+    if p in {"RB", "FB"}:
+        return "RB"
+    if p in {"WR"}:
+        return "WR"
+    if p in {"TE"}:
+        return "TE"
+    if p in {"OT", "T", "OL", "G", "C", "IOL"}:
+        return "OL"
+    if p in {"DE", "EDGE"}:
+        return "EDGE"
+    if p in {"DT", "DL", "IDL", "NT"}:
+        return "IDL"
+    if p in {"LB", "ILB", "OLB"}:
+        return "LB"
+    if p in {"CB", "DB"}:
+        return "CB"
+    if p in {"S", "SAF", "FS", "SS"}:
+        return "S"
+
+    return p or "UNK"
+
+
+def append_extra_projection_sources(master):
+    """
+    Add future/current draft classes that are not in V9/master output yet.
+    These rows are projection-only and must not use NFL career outcome leakage.
+    """
+    frames = [master.copy()]
+
+    for path in EXTRA_PROJECTION_SOURCES:
+        if not path.exists():
+            print(f"Extra projection source missing, skipping: {path}")
+            continue
+
+        extra = pd.read_csv(path, low_memory=False)
+        if extra.empty:
+            continue
+
+        # Normalize core columns expected by V10.
+        if "draft_year" not in extra.columns:
+            if "season" in extra.columns:
+                extra["draft_year"] = pd.to_numeric(extra["season"], errors="coerce")
+            else:
+                print(f"Skipping {path}: no season/draft_year column")
+                continue
+
+        extra = extra[pd.to_numeric(extra["draft_year"], errors="coerce").ge(2026)].copy()
+        if extra.empty:
+            continue
+
+        # Build a reliable player display name from the best available columns.
+        name_candidates = [
+            "player",
+            "pfr_player_name",
+            "player_name",
+            "name",
+            "player_name_clean",
+            "name_norm",
+        ]
+
+        name_series = None
+        for nc in name_candidates:
+            if nc not in extra.columns:
+                continue
+
+            s = extra[nc].astype(str)
+            valid = s.notna() & (s.str.strip() != "") & (s.str.lower() != "nan") & (s.str.lower() != "none")
+
+            if name_series is None:
+                name_series = pd.Series(np.nan, index=extra.index, dtype="object")
+
+            name_series = name_series.where(name_series.notna(), s.where(valid, np.nan))
+
+        if name_series is None or name_series.notna().sum() == 0:
+            print(f"Skipping {path}: no usable player name column")
+            continue
+
+        extra["player"] = name_series
+
+        if "college" not in extra.columns:
+            if "school_clean" in extra.columns:
+                extra["college"] = extra["school_clean"]
+            elif "college_name" in extra.columns:
+                extra["college"] = extra["college_name"]
+            else:
+                extra["college"] = ""
+
+        if "position_group" not in extra.columns:
+            extra["position_group"] = extra["position"].map(normalize_position_group) if "position" in extra.columns else "UNK"
+
+        if "round" in extra.columns:
+            extra["round"] = pd.to_numeric(extra["round"], errors="coerce")
+
+        if "pick" in extra.columns:
+            extra["pick"] = pd.to_numeric(extra["pick"], errors="coerce")
+
+        extra["score_mode"] = "prospect_projection"
+        extra["source_projection_file"] = str(path)
+
+        frames.append(extra)
+        print(f"Loaded extra projection rows from {path}: {len(extra):,}")
+
+    combined = pd.concat(frames, ignore_index=True, sort=False)
+
+    # Make sure all rows use a common draft_year field.
+    # Historical master rows often use season, while extra projection rows may use draft_year.
+    if "season" in combined.columns:
+        season_year = pd.to_numeric(combined["season"], errors="coerce")
+        if "draft_year" in combined.columns:
+            draft_year = pd.to_numeric(combined["draft_year"], errors="coerce")
+            combined["draft_year"] = draft_year.combine_first(season_year)
+        else:
+            combined["draft_year"] = season_year
+
+    # Do not dedupe the full combined master here.
+    # Historical rows may not use the generic 'player' column, and deduping here
+    # can accidentally collapse the training set.
+    return combined
+
+
+
+def choose_year_col(df):
+    """
+    Pick the best year column. After appending future classes, both draft_year
+    and season may exist; choose the one with the most usable values.
+    """
+    candidates = [c for c in ["draft_year", "season", "year"] if c in df.columns]
+
+    if not candidates:
+        raise ValueError("No draft_year/season/year column found")
+
+    best = None
+    best_count = -1
+
+    for c in candidates:
+        n = pd.to_numeric(df[c], errors="coerce").notna().sum()
+        if n > best_count:
+            best = c
+            best_count = n
+
+    return best
 
 def choose_name_col(df):
-    for c in ["player_name_clean", "player", "player_name", "name", "pfr_player_name"]:
+    """
+    Fallback name selector. Main() will override this using V9 match-rate.
+    """
+    candidates = [
+        "pfr_player_name",
+        "player_name",
+        "player",
+        "name",
+        "player_name_clean",
+        "name_norm",
+    ]
+
+    for c in candidates:
         if c in df.columns:
             return c
-    raise ValueError("No player name column found")
+
+    raise ValueError("No usable player name column found")
+
+
+def choose_name_col_by_v9_match(master, v9):
+    """
+    Pick the player-name column that actually matches V9 historical rows.
+    This prevents appended 2026 rows from making us choose the wrong generic
+    'player' column and losing all training targets.
+    """
+    candidates = [
+        "pfr_player_name",
+        "player_name",
+        "player",
+        "name",
+        "player_name_clean",
+        "name_norm",
+    ]
+
+    v9_tmp = v9.copy()
+    v9_names = set(clean_name(v9_tmp["player"]).dropna().astype(str))
+    v9_years = set(pd.to_numeric(v9_tmp["draft_year"], errors="coerce").dropna().astype(int))
+
+    best = None
+    best_hits = -1
+
+    year_source = None
+    if "draft_year" in master.columns:
+        year_source = pd.to_numeric(master["draft_year"], errors="coerce")
+    elif "season" in master.columns:
+        year_source = pd.to_numeric(master["season"], errors="coerce")
+
+    hist_mask = pd.Series(True, index=master.index)
+    if year_source is not None:
+        hist_mask = year_source.le(2022)
+
+    for c in candidates:
+        if c not in master.columns:
+            continue
+
+        names = clean_name(master.loc[hist_mask, c]).astype(str)
+        hits = int(names.isin(v9_names).sum())
+
+        print(f"Name column candidate {c}: V9 name hits={hits:,}")
+
+        if hits > best_hits:
+            best = c
+            best_hits = hits
+
+    if best is None or best_hits <= 0:
+        raise ValueError("Could not find a name column that matches V9")
+
+    print(f"Selected name column by V9 match: {best} hits={best_hits:,}")
+    return best
 
 
 def candidate_feature_columns(df):
@@ -167,16 +376,34 @@ def candidate_feature_columns(df):
 
 
 def position_group_col(df):
-    if "position_group" in df.columns:
-        return "position_group"
-    if "position_group_model" in df.columns:
-        return "position_group_model"
-    if "pff_avg_position_group_model" in df.columns:
-        return "pff_avg_position_group_model"
-    if "position" in df.columns:
-        return "position"
-    raise ValueError("No position column")
+    """
+    Pick the most populated position/position_group column.
+    """
+    candidates = [
+        "position_group",
+        "position_group_model",
+        "pff_avg_position_group_model",
+        "category",
+        "position",
+    ]
 
+    best = None
+    best_count = -1
+
+    for c in candidates:
+        if c not in df.columns:
+            continue
+        s = df[c].astype(str)
+        count = int(((s != "") & (s.str.lower() != "nan") & (s.str.lower() != "none")).sum())
+
+        if count > best_count:
+            best = c
+            best_count = count
+
+    if best is None:
+        raise ValueError("No position column")
+
+    return best
 
 def blend_by_year(year, projected, current):
     """
@@ -295,17 +522,31 @@ def spread_future_projection(row):
     market = draft_capital_score(pick)
     boost = future_position_boost(pos)
 
-    # Future classes have little/no NFL evidence. Use traits first, then market.
+    # Future classes have little/no NFL evidence.
+    # For 2025, we can use trait projection heavily.
+    # For 2026+, feature coverage is thinner, so actual draft capital should carry more weight.
+    yr = np.nan if pd.isna(year) else int(float(year))
+
     if pd.isna(market):
         base = trait
     else:
-        base = 0.72 * trait + 0.28 * market
+        if not pd.isna(yr) and yr >= 2026:
+            # Draft-capital-heavy fallback for future classes with thin trait data.
+            if trait < 60:
+                base = 0.40 * trait + 0.60 * market
+            else:
+                base = 0.55 * trait + 0.45 * market
+        else:
+            base = 0.72 * trait + 0.28 * market
 
     base += boost
 
-    # Add a non-linear separation term so high traits separate from mid traits.
-    # 75+ prospects pull upward; sub-70 profiles pull downward.
-    base += (trait - 74) * 0.20
+    # Add non-linear separation.
+    # Use a lighter penalty for 2026+ because thin feature coverage can artificially depress traits.
+    if not pd.isna(yr) and yr >= 2026:
+        base += max(-2.0, min(3.0, (trait - 70) * 0.12))
+    else:
+        base += (trait - 74) * 0.20
 
     # Top-pick QB guardrail: No. 1 QBs should project as real upside,
     # but not automatically elite.
@@ -321,22 +562,39 @@ def spread_future_projection(row):
             base = max(base, 76)
 
     # Premium-position guardrails.
-    # These are not elite labels; they prevent top drafted premium prospects
-    # from being pushed into role-player territory by sparse/noisy data.
+    # These prevent top drafted premium prospects from being buried when trait data is thin.
     if premium and not pd.isna(pk):
-        if pk <= 5 and trait >= 72:
-            base = max(base, 78)
-        elif pk <= 10 and trait >= 72:
-            base = max(base, 76)
-        elif pk <= 15 and trait >= 72:
-            base = max(base, 74)
+        if not pd.isna(yr) and yr >= 2026:
+            if pk <= 5:
+                base = max(base, 78)
+            elif pk <= 10:
+                base = max(base, 76)
+            elif pk <= 15:
+                base = max(base, 74)
+            elif pk <= 32:
+                base = max(base, 69)
+        else:
+            if pk <= 5 and trait >= 72:
+                base = max(base, 78)
+            elif pk <= 10 and trait >= 72:
+                base = max(base, 76)
+            elif pk <= 15 and trait >= 72:
+                base = max(base, 74)
 
     # Non-premium high draft slot still gets some prior, but less.
     if not premium and not pd.isna(pk):
-        if pk <= 5 and trait >= 74:
-            base = max(base, 76)
-        elif pk <= 15 and trait >= 74:
-            base = max(base, 73)
+        if not pd.isna(yr) and yr >= 2026:
+            if pk <= 5:
+                base = max(base, 74)
+            elif pk <= 15:
+                base = max(base, 71)
+            elif pk <= 32:
+                base = max(base, 66)
+        else:
+            if pk <= 5 and trait >= 74:
+                base = max(base, 76)
+            elif pk <= 15 and trait >= 74:
+                base = max(base, 73)
 
     return round(max(0, min(99, base)), 1)
 
@@ -531,7 +789,6 @@ def career_projection_label(score, pos=None):
     5-10 year projected career outcome label.
 
     This describes projected outcome, not confidence.
-    The labels are intentionally outcome-based and less fluffy than raw score tiers.
     """
     if pd.isna(score):
         return "Unknown career projection"
@@ -554,6 +811,8 @@ def career_projection_label(score, pos=None):
         return "Rotational contributor / developmental starter"
     if score >= 62:
         return "Depth / developmental projection"
+    if score >= 55:
+        return "Fringe roster / practice-squad projection"
     return "Long-shot / replacement-level projection"
 
 
@@ -575,8 +834,10 @@ def career_projection_range(score, year):
         spread = 7
     elif yr == 2024:
         spread = 9
-    elif yr >= 2025:
+    elif yr == 2025:
         spread = 11
+    elif yr >= 2026:
+        spread = 13
     else:
         spread = 10
 
@@ -594,9 +855,11 @@ def main():
         raise FileNotFoundError(f"Missing V9 file: {V9}")
 
     master = pd.read_csv(MASTER, low_memory=False)
+    master = append_extra_projection_sources(master)
+
     v9 = pd.read_csv(V9, low_memory=False)
 
-    name_col = choose_name_col(master)
+    name_col = choose_name_col_by_v9_match(master, v9)
     year_col = choose_year_col(master)
 
     master = master.copy()
@@ -639,6 +902,25 @@ def main():
     pg_col = position_group_col(base)
     base["position_group_v10"] = base[pg_col].astype(str)
 
+    # For appended 2026+ projection-only rows, force clean football position groups.
+    # This keeps premium-position scoring from failing because of broad columns like category/side.
+    future_projection_rows = pd.to_numeric(base["draft_year"], errors="coerce").ge(2026)
+
+    if "position" in base.columns:
+        base.loc[future_projection_rows, "position_group_v10"] = base.loc[
+            future_projection_rows, "position"
+        ].map(normalize_position_group)
+
+    if "player" in base.columns:
+        fallback_name = base["player"]
+        if "pfr_player_name" in base.columns:
+            fallback_name = fallback_name.fillna(base["pfr_player_name"])
+        if "player_name_clean" in base.columns:
+            fallback_name = fallback_name.fillna(base["player_name_clean"])
+        if "name_norm" in base.columns:
+            fallback_name = fallback_name.fillna(base["name_norm"])
+        base.loc[future_projection_rows, "player"] = fallback_name.loc[future_projection_rows]
+
     feature_cols = candidate_feature_columns(base)
 
     target = pd.to_numeric(base["site_display_score"], errors="coerce")
@@ -649,6 +931,12 @@ def main():
 
     X = base[feature_cols].apply(pd.to_numeric, errors="coerce")
     y = target
+
+    print("Debug year col:", year_col)
+    print("Debug name col:", name_col)
+    print("Debug rows total:", len(base))
+    print("Debug target notna:", int(target.notna().sum()))
+    print("Debug train rows:", int(train_mask.sum()))
 
     if train_mask.sum() < 500:
         raise ValueError(f"Too few training rows: {train_mask.sum()}")
@@ -786,6 +1074,58 @@ def main():
             else:
                 out[c] = out[newc]
             out = out.drop(columns=[newc], errors="ignore")
+
+    # Append projection-only rows that are present in base but missing from V9/out,
+    # such as the 2026 drafted class.
+    out["_merge_name"] = clean_name(out["player"])
+    out["_merge_year"] = pd.to_numeric(out["draft_year"], errors="coerce")
+    existing_keys = set(zip(out["_merge_name"], out["_merge_year"]))
+
+    extra_rows = base[pd.to_numeric(base["draft_year"], errors="coerce").ge(2026)].copy()
+    extra_rows["_key"] = list(zip(extra_rows["_merge_name"], extra_rows["_merge_year"]))
+    extra_rows = extra_rows[~extra_rows["_key"].isin(existing_keys)].copy()
+
+    # De-dupe future projection rows before appending.
+    # The 2026 projection source can appear twice after merge/append paths.
+    extra_rows = extra_rows.drop_duplicates(["_merge_name", "_merge_year"], keep="first").copy()
+
+    if len(extra_rows):
+        append_rows = pd.DataFrame(index=extra_rows.index)
+
+        # Use best available display name for appended projection-only rows.
+        player_name = extra_rows["player"] if "player" in extra_rows.columns else pd.Series(np.nan, index=extra_rows.index)
+        for nc in ["pfr_player_name", "player_name_clean", "name_norm"]:
+            if nc in extra_rows.columns:
+                player_name = player_name.fillna(extra_rows[nc])
+
+        append_rows["player"] = player_name
+        append_rows["draft_year"] = extra_rows["draft_year"]
+        append_rows["position"] = extra_rows["position"] if "position" in extra_rows.columns else ""
+        append_rows["position_group"] = extra_rows["position_group_v10"]
+        append_rows["college"] = extra_rows["college"] if "college" in extra_rows.columns else ""
+        append_rows["round"] = extra_rows["round"] if "round" in extra_rows.columns else np.nan
+        append_rows["pick"] = extra_rows["pick"] if "pick" in extra_rows.columns else np.nan
+        append_rows["score_mode"] = "prospect_projection"
+
+        for c in add_cols:
+            if c in extra_rows.columns:
+                append_rows[c] = extra_rows[c]
+
+        append_rows["site_display_score"] = append_rows["site_display_score_v10"]
+        append_rows["site_display_score_label"] = append_rows["site_display_score_label_v10"]
+        append_rows["display_grade"] = append_rows["site_display_score"]
+        append_rows["display_grade_label"] = append_rows["site_display_score_label"]
+
+        # Add any columns missing from either side.
+        for c in out.columns:
+            if c not in append_rows.columns:
+                append_rows[c] = np.nan
+        for c in append_rows.columns:
+            if c not in out.columns:
+                out[c] = np.nan
+
+        out = pd.concat([out, append_rows[out.columns]], ignore_index=True)
+        print(f"Appended extra projection-only rows to V10 output: {len(append_rows):,}")
 
     future_mask = pd.to_numeric(out["draft_year"], errors="coerce").ge(2023)
 
