@@ -87,6 +87,12 @@ function cleanYear(x) {
   return x ? String(x).replace(/\.0$/, "") : "";
 }
 
+
+function tagHtml(label, className = "tag") {
+  if (!label || label === "nan" || label === "undefined") return "";
+  return `<span class="${className}">${escapeHtml(label)}</span>`;
+}
+
 function populateFilters() {
   const years = [...new Set(rows.map(r => cleanYear(r.draft_year)).filter(Boolean))].sort((a, b) => Number(b) - Number(a));
   const positions = [...new Set(rows.map(r => r.position_group).filter(Boolean))].sort();
@@ -162,6 +168,9 @@ function render() {
   cards.className = "player-list";
 
   filtered.slice(0, 500).forEach((r, idx) => {
+    const projectionBadgeHtml = tagHtml(r.projection_badge, "tag projection-tag");
+    const careerProjectionBadgeHtml = tagHtml(r.career_projection_label, "tag career-projection-tag");
+
     const typeLabel = missTypeLabel(r);
 
     const item = document.createElement("article");
@@ -179,6 +188,7 @@ function render() {
         <div class="row-main">
           <div class="row-name">${escapeHtml(r.player)}</div>
           <div class="row-meta">${escapeHtml(cleanYear(r.draft_year))} · ${escapeHtml(r.position)} · ${escapeHtml(r.college)}</div>
+          <div class="tag-row">${projectionBadgeHtml}${careerProjectionBadgeHtml}</div>
         </div>
 
         <div class="row-regrade">
