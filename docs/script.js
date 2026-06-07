@@ -170,6 +170,7 @@ function render() {
   filtered.slice(0, 500).forEach((r, idx) => {
     const projectionBadgeHtml = tagHtml(r.projection_badge, "tag projection-tag");
     const careerProjectionBadgeHtml = tagHtml(r.career_projection_label, "tag career-projection-tag");
+    const rangeBadgeHtml = tagHtml(r.career_projection_range ? `Range: ${r.career_projection_range}` : "", "tag range-tag");
 
     const typeLabel = missTypeLabel(r);
 
@@ -188,7 +189,7 @@ function render() {
         <div class="row-main">
           <div class="row-name">${escapeHtml(r.player)}</div>
           <div class="row-meta">${escapeHtml(cleanYear(r.draft_year))} · ${escapeHtml(r.position)} · ${escapeHtml(r.college)}</div>
-          <div class="tag-row">${projectionBadgeHtml}${careerProjectionBadgeHtml}</div>
+          <div class="tag-row">${projectionBadgeHtml}${careerProjectionBadgeHtml}${rangeBadgeHtml}</div>
         </div>
 
         <div class="row-regrade">
