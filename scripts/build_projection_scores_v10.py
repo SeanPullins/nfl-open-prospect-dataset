@@ -223,6 +223,105 @@ def tier(score):
 
 
 
+
+def draft_capital_score(pick):
+    """
+    Convert draft slot into a broad future-career expectation score.
+    This is not a final grade; it is a market/draft-capital prior.
+    """
+    if pd.isna(pick):
+        return np.nan
+
+    p = float(pick)
+
+    if p <= 1:
+        return 84
+    if p <= 3:
+        return 82
+    if p <= 5:
+        return 80
+    if p <= 10:
+        return 78
+    if p <= 15:
+        return 76
+    if p <= 32:
+        return 72
+    if p <= 64:
+        return 66
+    if p <= 100:
+        return 60
+    if p <= 150:
+        return 54
+    if p <= 220:
+        return 48
+    return 42
+
+
+def future_position_boost(pos):
+    p = str(pos or "").upper().strip()
+
+    if p == "QB":
+        return 3.0
+    if p in {"EDGE", "DE", "OT", "T", "OL", "WR", "CB"}:
+        return 1.5
+    if p in {"DT", "IDL", "TE", "S", "SAF"}:
+        return 0.5
+    if p in {"RB", "LB", "IOL", "G", "C"}:
+        return -0.5
+    return 0.0
+
+
+def spread_future_projection(row):
+    """
+    Projection-first future score for 2025+.
+
+    Goal:
+    - avoid flat 77s
+    - use historical trait model as main source
+    - blend with draft capital/market prior
+    - add small premium-position context
+    """
+    trait = row.get("v10_trait_projection_score")
+    year = row.get("draft_year")
+    pick = row.get("pick")
+    pos = row.get("position_group_v10") or row.get("position_group") or row.get("position")
+
+    if pd.isna(trait):
+        return np.nan
+
+    trait = float(trait)
+    yr = np.nan if pd.isna(year) else int(float(year))
+
+    market = draft_capital_score(pick)
+    boost = future_position_boost(pos)
+
+    # Future classes have little/no NFL evidence. Use traits first, then market.
+    if pd.isna(market):
+        base = trait
+    else:
+        base = 0.72 * trait + 0.28 * market
+
+    base += boost
+
+    # Add a non-linear separation term so high traits separate from mid traits.
+    # 75+ prospects pull upward; sub-70 profiles pull downward.
+    base += (trait - 74) * 0.20
+
+    # Top-pick QB guardrail: No. 1 QBs should project as real upside,
+    # but not automatically elite.
+    pk = np.nan if pd.isna(pick) else float(pick)
+    p = str(pos or "").upper().strip()
+
+    if p == "QB" and not pd.isna(pk):
+        if pk <= 1:
+            base = max(base, 79)
+        elif pk <= 5:
+            base = max(base, 76)
+
+    return round(max(0, min(99, base)), 1)
+
+
+
 def calibrate_projection_score(row):
     """
     Final V10 projection calibration.
@@ -247,6 +346,13 @@ def calibrate_projection_score(row):
 
     yr = np.nan if pd.isna(year) else int(float(year))
     pk = np.nan if pd.isna(pick) else float(pick)
+
+    # For 2025+ and future classes, use a wider projection-first score.
+    # This prevents the class from bunching around a flat draft-capital floor.
+    if not pd.isna(yr) and yr >= 2025:
+        future_score = spread_future_projection(row)
+        if not pd.isna(future_score):
+            return future_score
 
     premium = pos in {"QB", "OT", "OL", "T", "EDGE", "DE", "WR", "CB", "TE"}
 
@@ -390,6 +496,68 @@ def projection_regrade(row):
         return "Projected drafted too early"
 
     return "Projected about right"
+
+
+
+
+def career_projection_label(score, pos=None):
+    """
+    5-10 year projected career outcome label.
+
+    This is intentionally stricter than the numeric score tier so the site
+    does not call every decent projection a starter.
+    """
+    if pd.isna(score):
+        return "Unknown career projection"
+
+    score = float(score)
+
+    if score >= 92:
+        return "Franchise cornerstone / All-Pro ceiling"
+    if score >= 88:
+        return "High-end Pro Bowl outcome"
+    if score >= 84:
+        return "Above-average long-term starter"
+    if score >= 80:
+        return "Solid starter outcome"
+    if score >= 76:
+        return "Starter traits / volatile projection"
+    if score >= 70:
+        return "Role player / matchup starter projection"
+    if score >= 64:
+        return "Developmental contributor projection"
+    if score >= 58:
+        return "Depth / fringe roster projection"
+    return "Long-shot / replacement-level projection"
+
+
+def career_projection_range(score, year):
+    """
+    5-10 year range around projection.
+    Wider for future classes, narrower for players with NFL evidence.
+    """
+    if pd.isna(score):
+        return ""
+
+    score = float(score)
+    yr = np.nan if pd.isna(year) else int(float(year))
+
+    if yr <= 2022:
+        return f"{score:.1f}"
+
+    if yr == 2023:
+        spread = 7
+    elif yr == 2024:
+        spread = 9
+    elif yr >= 2025:
+        spread = 11
+    else:
+        spread = 10
+
+    lo = max(0, score - spread)
+    hi = min(99, score + spread)
+
+    return f"{lo:.1f}-{hi:.1f}"
 
 
 
@@ -662,6 +830,37 @@ def main():
         "Projected from historical 1980-2022 players with similar college/PFF/combine/draft profiles "
         "plus limited early NFL evidence where available."
     )
+
+    # User-facing score/projection tags.
+    # These make it clear whether a score is a final career value or a projection.
+    years_for_tags = pd.to_numeric(out["draft_year"], errors="coerce")
+
+    out["projection_status"] = "Final / Mature Outcome"
+    out["projection_badge"] = "Actual Career Value"
+    out["projection_basis"] = "Actual NFL career value"
+
+    recent_projection_mask = years_for_tags.between(2023, 2024, inclusive="both")
+    future_projection_mask = years_for_tags.ge(2025)
+
+    out.loc[recent_projection_mask, "projection_status"] = "Projection"
+    out.loc[recent_projection_mask, "projection_badge"] = "Historical Potential + Early NFL Evidence"
+    out.loc[recent_projection_mask, "projection_basis"] = "Historical traits plus limited early NFL evidence"
+
+    out.loc[future_projection_mask, "projection_status"] = "Projection"
+    out.loc[future_projection_mask, "projection_badge"] = "Historical Potential Projection"
+    out.loc[future_projection_mask, "projection_basis"] = "Historical traits, college/PFF, combine, and draft similarity"
+
+    # User-facing 5-10 year career projection.
+    out["career_projection_score_5_10"] = pd.to_numeric(out["site_display_score"], errors="coerce").round(1)
+    out["career_projection_label"] = out.apply(
+        lambda r: career_projection_label(r.get("career_projection_score_5_10"), r.get("position_group")),
+        axis=1
+    )
+    out["career_projection_range"] = out.apply(
+        lambda r: career_projection_range(r.get("career_projection_score_5_10"), r.get("draft_year")),
+        axis=1
+    )
+    out["career_projection_basis"] = out["projection_basis"]
 
     out = out.drop(columns=["_merge_name", "_merge_year"], errors="ignore")
 
