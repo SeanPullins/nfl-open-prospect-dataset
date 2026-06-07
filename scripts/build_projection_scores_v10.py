@@ -665,21 +665,6 @@ def main():
 
     out = out.drop(columns=["_merge_name", "_merge_year"], errors="ignore")
 
-    # Clean display formatting: avoid years/ranks showing as 2025.0 / 9.0 on site.
-    int_like_cols = [
-        "draft_year",
-        "round",
-        "pick",
-        "redraft_class_rank",
-        "redraft_position_rank",
-        "should_have_pick_bucket",
-    ]
-
-    for c in int_like_cols:
-        if c in out.columns:
-            vals = pd.to_numeric(out[c], errors="coerce")
-            out[c] = vals.map(lambda x: "" if pd.isna(x) else str(int(round(x))))
-
     OUT_SITE.parent.mkdir(parents=True, exist_ok=True)
     OUT_DOCS.parent.mkdir(parents=True, exist_ok=True)
     REPORT.parent.mkdir(parents=True, exist_ok=True)

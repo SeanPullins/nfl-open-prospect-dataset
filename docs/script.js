@@ -55,6 +55,13 @@ function score(x) {
   return n.toFixed(1);
 }
 
+function cleanInt(x) {
+  const n = Number(x);
+  if (Number.isFinite(n)) return String(Math.round(n));
+  return x ? String(x) : "—";
+}
+
+
 function missTypeLabel(r) {
   if (r.value_flag === "good_miss") return "Good Miss / Value";
   if (r.miss_flag === "bad_miss") return "Bad Miss";
@@ -73,8 +80,15 @@ function roundLabel(r) {
   return `R${Math.round(round)}`;
 }
 
+
+function cleanYear(x) {
+  const n = Number(x);
+  if (Number.isFinite(n)) return String(Math.round(n));
+  return x ? String(x).replace(/\.0$/, "") : "";
+}
+
 function populateFilters() {
-  const years = [...new Set(rows.map(r => r.draft_year).filter(Boolean))].sort((a, b) => Number(b) - Number(a));
+  const years = [...new Set(rows.map(r => cleanYear(r.draft_year)).filter(Boolean))].sort((a, b) => Number(b) - Number(a));
   const positions = [...new Set(rows.map(r => r.position_group).filter(Boolean))].sort();
 
   const yearFilter = document.getElementById("yearFilter");
@@ -109,7 +123,7 @@ function render() {
     const hay = `${r.player} ${r.college} ${r.position} ${r.position_group} ${r.outcome_tier} ${r.actual_outcome_flag}`.toLowerCase();
 
     if (q && !hay.includes(q)) return false;
-    if (year && String(r.draft_year) !== String(year)) return false;
+    if (year && cleanYear(r.draft_year) !== String(year)) return false;
     if (pos && r.position_group !== pos) return false;
 
     if (outcome === "good_miss" && r.value_flag !== "good_miss") return false;
@@ -164,7 +178,7 @@ function render() {
 
         <div class="row-main">
           <div class="row-name">${escapeHtml(r.player)}</div>
-          <div class="row-meta">${escapeHtml(r.draft_year)} · ${escapeHtml(r.position)} · ${escapeHtml(r.college)}</div>
+          <div class="row-meta">${escapeHtml(cleanYear(r.draft_year))} · ${escapeHtml(r.position)} · ${escapeHtml(r.college)}</div>
         </div>
 
         <div class="row-regrade">
