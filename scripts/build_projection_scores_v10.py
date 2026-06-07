@@ -312,11 +312,31 @@ def spread_future_projection(row):
     pk = np.nan if pd.isna(pick) else float(pick)
     p = str(pos or "").upper().strip()
 
+    premium = p in {"QB", "OT", "T", "OL", "EDGE", "DE", "WR", "CB", "TE"}
+
     if p == "QB" and not pd.isna(pk):
         if pk <= 1:
             base = max(base, 79)
         elif pk <= 5:
             base = max(base, 76)
+
+    # Premium-position guardrails.
+    # These are not elite labels; they prevent top drafted premium prospects
+    # from being pushed into role-player territory by sparse/noisy data.
+    if premium and not pd.isna(pk):
+        if pk <= 5 and trait >= 72:
+            base = max(base, 78)
+        elif pk <= 10 and trait >= 72:
+            base = max(base, 76)
+        elif pk <= 15 and trait >= 72:
+            base = max(base, 74)
+
+    # Non-premium high draft slot still gets some prior, but less.
+    if not premium and not pd.isna(pk):
+        if pk <= 5 and trait >= 74:
+            base = max(base, 76)
+        elif pk <= 15 and trait >= 74:
+            base = max(base, 73)
 
     return round(max(0, min(99, base)), 1)
 
@@ -347,11 +367,17 @@ def calibrate_projection_score(row):
     yr = np.nan if pd.isna(year) else int(float(year))
     pk = np.nan if pd.isna(pick) else float(pick)
 
-    # For 2025+ and future classes, use a wider projection-first score.
-    # This prevents the class from bunching around a flat draft-capital floor.
-    if not pd.isna(yr) and yr >= 2025:
+    # For 2024+ and future classes, use a wider projection-first score.
+    # 2024 gets early NFL evidence, but early/current value should mostly confirm
+    # upside, not drag premium rookies down due to noisy/small samples.
+    if not pd.isna(yr) and yr >= 2024:
         future_score = spread_future_projection(row)
         if not pd.isna(future_score):
+            if yr == 2024 and not pd.isna(current):
+                cur = float(current)
+                boosted = 0.75 * future_score + 0.25 * cur
+                # Use early NFL only as an upward confirmation signal.
+                return round(max(0, min(99, max(future_score, boosted))), 1)
             return future_score
 
     premium = pos in {"QB", "OT", "OL", "T", "EDGE", "DE", "WR", "CB", "TE"}
@@ -504,8 +530,8 @@ def career_projection_label(score, pos=None):
     """
     5-10 year projected career outcome label.
 
-    This is intentionally stricter than the numeric score tier so the site
-    does not call every decent projection a starter.
+    This describes projected outcome, not confidence.
+    The labels are intentionally outcome-based and less fluffy than raw score tiers.
     """
     if pd.isna(score):
         return "Unknown career projection"
@@ -522,12 +548,12 @@ def career_projection_label(score, pos=None):
         return "Solid starter outcome"
     if score >= 76:
         return "Starter traits / volatile projection"
-    if score >= 70:
-        return "Role player / matchup starter projection"
-    if score >= 64:
-        return "Developmental contributor projection"
-    if score >= 58:
-        return "Depth / fringe roster projection"
+    if score >= 72:
+        return "Possible starter / strong contributor"
+    if score >= 68:
+        return "Rotational contributor / developmental starter"
+    if score >= 62:
+        return "Depth / developmental projection"
     return "Long-shot / replacement-level projection"
 
 
